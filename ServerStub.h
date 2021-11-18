@@ -1,35 +1,70 @@
-#ifndef __SERVER_STUB_H__
-#define __SERVER_STUB_H__
-
-#include <memory>
-#include <cstring>
+#include <poll.h>
+#include <vector>
+#include <string>
+#include <errno.h>
+#include <stdio.h>
+#include <unistd.h>
 #include <arpa/inet.h>
-#include "ServerSocket.h"
+#include <net/if.h>
+#include <netdb.h>
+#include <netinet/tcp.h>
+#include <sys/ioctl.h>
+#include <sys/types.h>
+
+#include "ServerListenSocket.h"
+#include "ServerTimer.h"
 #include "Messages.h"
 
-
-class ServerStub {
-private:
-	std::unique_ptr<ServerSocket> socket;
-	int conn_descriptor;
-public:
-	ServerStub();
-	void Init(std::unique_ptr<ServerSocket> socket);
-
-	//------------------------Engineer Role--------------------------------
-	CustomerRequest ReceiveOrder();
-	int SendLaptop(LaptopInfo info);
-	int ReturnRecord(CustomerRecord record);
-
-	//---------------------------IFA Role--------------------------------
-	/* return value for the functions below:
-		-1 on failure, 1 on success, and 0 if Recv return 0 (remote connection closed
-	*/
-	int Receive_Replication_Request(ReplicationRequest * rep_req);
-	int Set_Connection_Descriptor();
-	int Get_Connection_Descriptor();
-	int Ship_Success_Status();
+struct Peer_Info{
+  int unique_id;
+  std::string IP;
+  int port;
 
 };
 
-#endif // end of #ifndef __SERVER_STUB_H__
+struct NodeInfo{
+  int port;
+  int node_id;
+  int num_peers;
+
+  int role;
+  int leader_id;
+};
+
+//otherwise get the error "use of non-static data member" for initialising pfds
+#define num_total_sockets 5
+
+class ServerStub{
+private:
+    std::vector<Peer_Info> PeerServerInfo;
+    ServerListenSocket ListenSocket;
+    int num_peers;
+    int node_id;
+    int port;
+
+    //polling to avoid blocking. Initialisation.
+    std::vector<pollfd> pfds;
+    int alive_connection;
+
+public:
+    ServerStub() {};
+
+    //initialization
+    int Init(NodeInfo * node_info, int argc, char *argv[]);
+    int FillPeerServerInfo(int argc, char *argv[]);
+
+    int Poll(int Poll_timeout);  //Poll_timeout is in millisecond
+    int CountVote();
+
+    void Handle_Follower_Poll(ServerTimer * timer);
+
+    void Broadcast_nodeID();
+    void SendNodeID(int fd);
+    void Connect_and_Send_RequestVoteRPC();
+
+    void Accept_Connection();
+    int Connect_To(std::string ip, int port);
+
+    void Add_Socket_To_Poll(int new_fd);
+    void Print_PeerServerInfo();
+};

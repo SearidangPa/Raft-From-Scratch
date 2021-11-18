@@ -1,49 +1,61 @@
-#include <chrono>
-#include <iostream>
-#include <mutex>
-#include <thread>
-#include <vector>
-#include "ServerSocket.h"
-#include "ServerThread.h"
-#include <cstdlib>
+#include "ServerMain.h"
+#include "ServerTimer.h"
+#include "ServerListenSocket.h"
+
 
 int main(int argc, char *argv[]) {
-	int port;
-	int engineer_cnt = 0;
-	int num_peers;
-	ServerSocket socket;
-	LaptopFactory factory;
-	std::unique_ptr<ServerSocket> new_socket;
-	std::vector<std::thread> thread_vector;
+    ServerTimer timer;
+    NodeInfo node_info;
+    ServerStub server_stub;
+    int Poll_timeout;
+    int num_votes = 1;
 
-	if (argc < 4) {
-		std::cout << "not enough arguments" << std::endl;
-		std::cout << argv[0] <<
-		"[port #] [# unique ID] [# peers] (repeat [ID] [IP] [port #])" << std::endl;
-		return 0;
-	}
+    if (!Init_Node_Info (&node_info, argc, argv)){
+      return 0;
+    }
 
-	port = atoi(argv[1]);
-	factory.SetFactoryId(atoi(argv[2]));
-	num_peers = atoi(argv[3]);
-	factory.SetNumPeers(num_peers);
+    if (!server_stub.Init(&node_info, argc, argv)) {
+      return 0;
+    }
 
-	if (factory.FillPeerServerInfo(argc, argv) < 0)		return 0;
+    timer.Start();
+    Poll_timeout = timer.Poll_timeout();
+    while(true){
 
-	std::thread admin_thread(&LaptopFactory::AdminThread, &factory);
-	thread_vector.push_back(std::move(admin_thread));
+        if (node_info.role == LEADER){    //send heartbeat message
+          //to-do: send real heartbeat message (empty log replication request)
+          server_stub.Broadcast_nodeID();
+        }
 
-	if (!socket.Init(port)) {
-		std::cout << "Socket initialization failed" << std::endl;
-		return 0;
-	}
+        if (node_info.role == FOLLOWER){
+            if (timer.Check_election_timeout()){
+                node_info.role = CANDIDATE;
+            }
+            else{
+                server_stub.Poll(Poll_timeout);
+                server_stub.Handle_Follower_Poll(&timer);
+            }
+        } //End follower role
 
-	while ((new_socket = socket.Accept())) {
-		std::thread engineer_thread(&LaptopFactory::EngineerThread,
-				&factory, std::move(new_socket),
-				engineer_cnt++);
+        if (node_info.role == CANDIDATE){
+            server_stub.Connect_and_Send_RequestVoteRPC();
+            int poll_count = server_stub.Poll(Poll_timeout);
 
-		thread_vector.push_back(std::move(engineer_thread));
-	}
-	return 0;
+            //to count vote, need to keep track of which nodes has voted.
+            //need to implement more structure.
+            //num_votes += server_stub.CountVote();
+
+            // if (num_votes > node_info.num_peers / 2){
+            //    node_info.role = LEADER;
+            // }
+            std::cout << "poll_count: " << poll_count << '\n';
+            node_info.role = LEADER;
+        }
+         //End candidate role
+
+         // int poll_count = server_stub.Poll(Poll_timeout);
+         // std::cout << "poll_count: " << poll_count << '\n';
+    } //END white(true)
+
+    return 1;
 }
