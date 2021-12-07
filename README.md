@@ -1,7 +1,7 @@
 # RAFT
 
 ### Instructions to run the program:
-We have written 2 shell scripts - one to run the client and other to run the server. To run the program on a local machine, local variable has to be set to 1, and to run on the vdi cluster, it has to be set to 0. The scripts support running of 3 server network and 5 server, and you can change the configuration by changing the num of servers variable in the script. Since all the vdi machines belongs to a cluster, all the machines have the ip address ending with "10.200.125.", the last 2 digits represents the id of a machine, and we have used that to represent server id as the command line argument to run the script. 
+I have written 2 shell scripts - one to run the client and other to run the server. To run the program on a local machine, local variable has to be set to 1, and to run on the vdi cluster, it has to be set to 0. The scripts support running of 3 server network and 5 server, and you can change the configuration by changing the num of servers variable in the script. Since all the vdi machines belongs to a cluster, all the machines have the ip address ending with "10.200.125.", the last 2 digits represents the id of a machine, and we have used that to represent server id as the command line argument to run the script. 
 
 ## Server:
         1. run the script with title - "Raft_server.sh" as:  ./Raft_server.sh [server ID] [repeat([peer ID])] [server role]
