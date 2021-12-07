@@ -1,61 +1,111 @@
 #include "ServerMain.h"
-#include "ServerTimer.h"
-#include "ServerListenSocket.h"
-
 
 int main(int argc, char *argv[]) {
     ServerTimer timer;
-    NodeInfo node_info;
-    ServerStub server_stub;
-    int Poll_timeout;
-    int num_votes = 1;
+    NodeInfo nodeInfo;
+    Raft raft; /* All server threads are here: Follower, Candidate, Leader */
+    ServerSocket serverSocket;
+    ServerSocket clientSocket;
+    Interface interface;
+    std::vector<Peer_Info> PeerServerInfo;
+    MapClientRecord mapRecord;
+    std::vector <std::thread> thread_vector;
 
-    if (!Init_Node_Info (&node_info, argc, argv)){
-      return 0;
+    if (!FillPeerServerInfo(argc, argv, &PeerServerInfo))           { return 0; }
+    if (!Init_NodeInfo(&nodeInfo, argc, argv))                      { return 0; }
+
+    int _role = atoi(argv[argc - 1]); // for debugging and testing purposes
+    ServerState serverState(nodeInfo.num_peers, _role);
+
+    /* init a listening port to listen to peer servers */
+    if (!serverSocket.Init(nodeInfo.server_port)) {
+        std::cout << "Socket initialization failed" << '\n';
+        return 0;
     }
 
-    if (!server_stub.Init(&node_info, argc, argv)) {
-      return 0;
+    /* init a listening port to listen to customer */
+    if (!clientSocket.Init(nodeInfo.client_port)) {
+        std::cout << "Socket initialization failed" << '\n';
+        return 0;
     }
 
-    timer.Start();
-    Poll_timeout = timer.Poll_timeout();
+    std::thread listen_clientThread(&Interface::Listening_Client, &interface,
+                                    &clientSocket, &serverState,
+                                    &thread_vector, &mapRecord);
+    thread_vector.push_back(std::move(listen_clientThread));
+
+
+    std::thread listenThread(&Raft::ListeningThread, &raft, &serverSocket, &serverState,
+                             &thread_vector,  &timer, &mapRecord);
+    thread_vector.push_back(std::move(listenThread));
+
+    /* for testing purposes: allow the programmer time to run other nodes */
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
     while(true){
+        timer.Atomic_Restart();
 
-        if (node_info.role == LEADER){    //send heartbeat message
-          //to-do: send real heartbeat message (empty log replication request)
-          server_stub.Broadcast_nodeID();
+        if (serverState.role == FOLLOWER) {
+            while(!timer.Check_Election_timeout()){}    /* do nothing */
+            serverState.SetRole(CANDIDATE);    /* if election timeout */
         }
 
-        if (node_info.role == FOLLOWER){
-            if (timer.Check_election_timeout()){
-                node_info.role = CANDIDATE;
-            }
-            else{
-                server_stub.Poll(Poll_timeout);
-                server_stub.Handle_Follower_Poll(&timer);
-            }
-        } //End follower role
-
-        if (node_info.role == CANDIDATE){
-            server_stub.Connect_and_Send_RequestVoteRPC();
-            int poll_count = server_stub.Poll(Poll_timeout);
-
-            //to count vote, need to keep track of which nodes has voted.
-            //need to implement more structure.
-            //num_votes += server_stub.CountVote();
-
-            // if (num_votes > node_info.num_peers / 2){
-            //    node_info.role = LEADER;
-            // }
-            std::cout << "poll_count: " << poll_count << '\n';
-            node_info.role = LEADER;
+        else if (serverState.role == CANDIDATE) {
+            Candidate_Role(&serverState, &nodeInfo, &PeerServerInfo,
+                           &thread_vector, &raft);
         }
-         //End candidate role
 
-         // int poll_count = server_stub.Poll(Poll_timeout);
-         // std::cout << "poll_count: " << poll_count << '\n';
-    } //END white(true)
+        else if (serverState.role == LEADER) {
+            // to-do: upon election: send a heartbeat message. engineer the initialization
 
-    return 1;
+            for (int i = 0; i < nodeInfo.num_peers; i++){
+                std::thread leader_thread(&Raft::LeaderThread, &raft, i, &PeerServerInfo,
+                                          &nodeInfo, &serverState, &mapRecord, &timer);
+                thread_vector.push_back(std::move(leader_thread));
+            }
+
+            /* do nothing :just so that we do not spin infinite number of threads */
+            while (true) {}
+        }
+
+        else {
+            std::cout << "Undefined Server Role Initialization" << '\n';
+        }
+    }
+
+}  // End: Main
+
+/* -------------------------------End: Main Function------------------------------------ */
+
+/* ------------------Candidate Helper Functions  ------------------*/
+void Candidate_Role(ServerState *serverState, NodeInfo *nodeInfo,
+                    std::vector<Peer_Info> *PeerServerInfo,
+                    std::vector <std::thread> *thread_vector,
+                    Raft *raft){
+
+    ServerTimer _timer;
+    serverState -> NewElection(nodeInfo -> node_id, nodeInfo -> num_peers);
+    int half_peers = nodeInfo -> num_peers / 2;
+    int num_votes;
+
+    for (int i = 0; i < nodeInfo -> num_peers; i++){
+        std::thread candidate_thread(&Raft::CandidateThread, raft, i, PeerServerInfo,
+                                     nodeInfo, serverState);
+        thread_vector -> push_back(std::move(candidate_thread));
+    }
+
+    _timer.Start();
+
+    while(!_timer.Check_Election_timeout()){
+        num_votes = serverState -> Get_numVotes();
+
+        if (num_votes > half_peers){
+            serverState -> Become_Leader(nodeInfo -> node_id);
+            break;
+        }
+    }
+
+    if (serverState -> GetRole() != LEADER) {
+        serverState -> SetRole(FOLLOWER);
+    }
 }

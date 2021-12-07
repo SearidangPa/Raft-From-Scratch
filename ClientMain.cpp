@@ -1,31 +1,57 @@
 #include "ClientMain.h"
 #include "ClientTimer.h"
-#include "ClientListenSocket.h"
-#include <iomanip>
-
+#include <thread>
 
 int main(int argc, char *argv[]) {
+    std::vector<Peer_Info> PeerServerInfo;
+    std::map<int,int> PeerIdIndexMap;
     ClientTimer timer;
-    NodeInfo node_info;
-    ClientStub clientstub;
-    int Poll_timeout;
-    int num_votes = 1;
+    std::vector<std::shared_ptr<ClientThreadClass>> client_vector;
+    std::vector<std::thread> thread_vector;
+    int num_customers;
+    int num_orders;
+    int request_type;
+    std::mutex print_lck;
 
-    if (!Init_Node_Info (&node_info, argc, argv)){
-      return 0;
+    if (!FillPeerServerInfo(argc, argv, &PeerServerInfo, &PeerIdIndexMap))    { return 0; }
+
+
+
+    if (argc < 4){
+        std::cout << " Invalid command line format " << '\n';
+        return 0;
     }
 
-    if (!clientstub.Init(&node_info, argc, argv)) {
-      return 0;
-    }
+    num_customers = atoi(argv[argc - 3]);
+    num_orders = atoi(argv[argc - 2]);
+    request_type = atoi(argv[argc - 1]);    // last input from command line
+
+    std::cout << "num_customers:  " << num_customers << '\n';
+    std::cout << "num_orders:  " << num_orders << '\n';
+    std::cout << "request_type:  " << request_type << '\n' << '\n';
 
     timer.Start();
-    Poll_timeout = timer.Poll_timeout();
+    for (int i = 0; i < num_customers; i++) {
+        auto client_cls = std::shared_ptr<ClientThreadClass>(new ClientThreadClass());
+        std::thread client_thread(&ClientThreadClass::ThreadBody, client_cls,
+                                  &PeerServerInfo, &PeerIdIndexMap, i, num_orders,
+                                  request_type, &print_lck);
 
-    while(true){
-        clientstub.Poll(Poll_timeout);
-        clientstub.Handle_Follower_Poll(&timer);
+        client_vector.push_back(std::move(client_cls));
+        thread_vector.push_back(std::move(client_thread));
     }
 
-    return 1;
+    for (auto& th : thread_vector) {
+        th.join();
+    }
+    timer.End();
+
+    for (auto& cls : client_vector) {
+        timer.Merge(cls->GetTimer());
+    }
+
+    if (request_type == WRITE_REQUEST){
+        timer.PrintStats();
+    }
+
 }

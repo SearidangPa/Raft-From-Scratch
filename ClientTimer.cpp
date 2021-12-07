@@ -1,37 +1,53 @@
 #include <iomanip>
 #include <iostream>
-#include <unistd.h>
+
 #include "ClientTimer.h"
 
 ClientTimer::ClientTimer() {
-	srand(time(0));
-
-	//election_timeout random between 1 to 2 millisecond
-	election_timeout = std::chrono::duration<double, std::milli>(1000 + rand() % 1000);
+	sum = duration<double, std::micro>(0);
+	max = duration<double, std::micro>(0);
+	min = duration<double, std::micro>(9999999999.9f);
+	op_count = 0;
 }
 
 void ClientTimer::Start() {
-	//allow the programmer time to run the script on multiple nodes
-	sleep(2);
 	start_time = high_resolution_clock::now();
 }
 
-void ClientTimer::Restart() {
-	//Print_elapsed_time();
-	start_time = high_resolution_clock::now();
+void ClientTimer::End() {
+	auto end_time = high_resolution_clock::now();
+	elapsed_time = (end_time - start_time);
 }
 
-//poll timeout small compared to election_timeout
-int ClientTimer::Poll_timeout(){
-	return election_timeout.count() / 1000;
+void ClientTimer::EndAndMerge() {
+	End();
+	op_count++;
+	sum += elapsed_time;
+	if (elapsed_time < min) {
+		min = elapsed_time;
+	}
+	if (elapsed_time > max) {
+		max = elapsed_time;
+	}
 }
 
-int ClientTimer::Check_election_timeout() {
-	elapsed_time = high_resolution_clock::now() - start_time;
-	return (elapsed_time > election_timeout);
+void ClientTimer::Merge(ClientTimer timer) {
+	sum += timer.sum;
+	op_count += timer.op_count;
+	if (timer.min < min) {
+		min = timer.min;
+	}
+	if (timer.max > max) {
+		max = timer.max;
+	}
 }
 
-void ClientTimer::Print_elapsed_time() {
+void ClientTimer::PrintStats() {
 	std::cout << std::fixed << std::setprecision(3);
-	std::cout << "elapsed_time: " << elapsed_time.count() << std::endl;
+	std::cout << sum.count() / op_count << "\t" << std::endl;   // mean latency
+	std::cout << min.count() << "\t";
+	std::cout << max.count() << "\t";
+
+    // throughput
+	std::cout << op_count / elapsed_time.count() * 1000000.0f << std::endl;
 }
